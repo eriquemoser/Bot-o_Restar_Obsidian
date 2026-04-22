@@ -1,0 +1,91 @@
+module.exports = async (params) => {
+  const { app, quickAddApi } = params;
+  const editor = app.workspace.activeEditor?.editor;
+  if (!editor) return;
+
+  let confirmed;
+  try {
+    confirmed = await quickAddApi.yesNoPrompt(
+      "Prosseguir?",
+      "Deseja resetar o conteúdo da nota?"
+    );
+  } catch (error) {
+    // Fecha a caixa, aperta Esc, etc.
+    if (error?.name === "MacroAbortError") return;
+    throw error;
+  }
+
+  if (!confirmed) return;
+
+  const text = editor.getValue();
+  if (!text) return;
+
+  const lines = text.split("\n");
+  const excluded = new Set();
+
+  let i = 0;
+  while (i < lines.length) {
+    const trimmed = lines[i].trim();
+
+    // Exclui bloco ```button ... ```
+    if (/^```button\b/.test(trimmed)) {
+      excluded.add(i);
+      i++;
+
+      while (i < lines.length) {
+        excluded.add(i);
+        if (/^```$/.test(lines[i].trim())) {
+          break;
+        }
+        i++;
+      }
+
+      // Exclui linha ^button-id logo abaixo, se existir
+      if (
+        i + 1 < lines.length &&
+        /^\^button[\w-]*\s*$/.test(lines[i + 1].trim())
+      ) {
+        excluded.add(i + 1);
+        i++;
+      }
+
+      i++;
+      continue;
+    }
+
+    // Exclui referência inline isolada, ex.: `button-meu-botao`
+    if (/^\s*`button[^`]*`\s*$/.test(trimmed)) {
+      excluded.add(i);
+    }
+
+    i++;
+  }
+
+  const selections = [];
+  let start = null;
+
+  for (let line = 0; line < lines.length; line++) {
+    const isExcluded = excluded.has(line);
+
+    if (!isExcluded && start === null) {
+      start = line;
+    }
+
+    if ((isExcluded || line === lines.length - 1) && start !== null) {
+      const endLine = isExcluded ? line - 1 : line;
+      const endCh = lines[endLine].length;
+
+      selections.push({
+        anchor: { line: start, ch: 0 },
+        head: { line: endLine, ch: endCh },
+      });
+
+      start = null;
+    }
+  }
+
+  if (selections.length === 0) return;
+
+  editor.focus();
+  editor.setSelections(selections, 0);
+};
